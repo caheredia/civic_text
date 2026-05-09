@@ -24,31 +24,33 @@ Because of that, the main technical bet is that we should start from layout-awar
 
 ## Recommendation Summary
 
-We should evaluate these three paths in parallel order, from most pragmatic to most managed:
+We should evaluate these three paths in order, from most pragmatic to most managed:
 
-1. Local GPU parsing with `Docling`
-2. Local GPU parsing with `MinerU`
+1. Local GPU parsing with `Docling Standard`
+2. Local GPU parsing with `Docling Granite VLM`
 3. AWS-native parsing and extraction with `Textract` plus `Bedrock`
+
+`MinerU` is intentionally excluded due to license concerns. Because these document outputs may ultimately be served on an open source public website, license compatibility is a hard requirement for parser selection.
 
 `Unstructured` remains a possible benchmark, but not a primary track for the first round of POCs.
 
-## Option 1: Local GPU with Docling
+## Option 1: Local GPU with Docling Standard
 
 ### Why this path
 
-`Docling` looks like a strong fit for:
+`Docling Standard` is the baseline local parser path:
 
 - local execution
 - structured document output
-- OCR plus layout understanding
+- native OCR plus layout understanding
 - Python-friendly integration
-- GPU support
+- CUDA acceleration through PyTorch
 
 This is a good candidate if we want to preserve control, avoid per-document vendor costs, and keep the system deployable on a single local workstation or dedicated GPU box.
 
 ### What this POC should prove
 
-- Can `Docling` produce cleaner reading order than the current page-by-page Tesseract flow?
+- Can `Docling Standard` produce cleaner reading order than the current page-by-page Tesseract flow?
 - Does it suppress or isolate headers and footers well enough to reduce custom cleanup?
 - Can it preserve page and block structure so later extraction logic can reference exact source regions?
 - Is throughput good enough for a realistic asynchronous pipeline?
@@ -80,48 +82,46 @@ Then add a thin extraction layer for:
 - stable extraction output on at least a small mixed sample
 - acceptable local runtime for batch processing
 
-## Option 2: Local GPU with MinerU
+## Option 2: Local GPU with Docling Granite VLM
 
 ### Why this path
 
-`MinerU` is promising because it explicitly emphasizes:
+`Docling Granite VLM` uses the Docling VLM pipeline backed by `ibm-granite/granite-docling-258M`.
 
-- header and footer removal
-- reading-order reconstruction
-- JSON / markdown export
-- scanned PDF handling
-- local GPU acceleration
+This should be treated as a separate parsing strategy, not merely a faster version of the standard pipeline.
 
-On paper, it maps closely to the actual failure modes described in the problem statement.
+It is worth testing because a VLM may better reconstruct semantically coherent page structure on hard PDFs where stage-based OCR and layout analysis still breaks down.
 
 ### What this POC should prove
 
-- Does `MinerU` outperform `Docling` on messy civic PDFs?
-- Is its output easier to post-process into item and vote records?
-- Does it better preserve cross-page continuity for discussion and vote blocks?
+- Does `Docling Granite VLM` produce better page reconstruction on civic PDFs with irregular formatting?
+- Does it handle cross-page continuity better than `Docling Standard`?
+- Does the quality gain, if any, justify the higher runtime and serving complexity?
+- Can a local GPU-backed inference server run this path at acceptable throughput?
 
 ### POC shape
 
-Run the same evaluation corpus used for `Docling` and compare:
+Run the same corpus through the Docling VLM pipeline and compare against `Docling Standard`:
 
-- parsing quality
-- structural cleanliness
-- runtime
-- ease of downstream extraction
+- markdown / JSON output quality
+- reading order
+- handling of repeated headers and footers
+- semantic coherence of vote and attendance sections
+- runtime and GPU utilization
 
-Then implement the same narrow extraction tasks so results are comparable across options.
+Then apply the same narrow extraction tasks so output quality is directly comparable.
 
 ### Primary risks
 
-- more operational complexity than `Docling`
-- parsing quality may be strong on academic/business PDFs but less strong on civic documents
-- integration ergonomics may be worse even if raw output quality is better
+- more moving parts due to local inference server requirements
+- runtime may be too slow for large-scale continuous processing
+- semantic page reconstruction may not materially improve extraction on real meeting PDFs
 
 ### Success criteria
 
-- equal or better structure than `Docling`
-- better handling of repeated boilerplate and cross-page blocks
-- comparable or acceptable runtime on local hardware
+- measurable quality improvement over `Docling Standard` on difficult documents
+- acceptable throughput on local hardware
+- enough improvement to justify separate operational complexity
 
 ## Option 3: AWS with Textract + Bedrock
 
@@ -194,14 +194,15 @@ Each POC should be scored on the same dimensions:
 
 ## Proposed Execution Order
 
-1. `Docling` POC
-2. `MinerU` POC
+1. `Docling Standard` POC
+2. `Docling Granite VLM` POC
 3. `Textract` plus `Bedrock` POC
 
 Reasoning:
 
-- the first two tell us how far we can get with local parsing before paying cloud inference costs
+- the first two isolate whether the standard Docling pipeline or the Granite VLM path is the stronger local baseline
 - the AWS path gives us a managed baseline and may still win on engineering simplicity
+- licensing fit is treated as a hard filter before technical benchmarking
 
 ## Deliverables Per POC
 
@@ -217,6 +218,7 @@ Each proof of concept should produce:
 At the end of the three POCs, we should be able to answer:
 
 - which parser gives us the best document normalization layer
+- whether the Docling standard or Granite VLM path is the better local Docling option
 - whether local GPU is good enough to avoid managed services
 - whether AWS managed extraction is worth the cost and complexity
 - what the thinnest possible custom civic-extraction layer looks like
